@@ -1,15 +1,20 @@
 import torch
 import random
 import hashlib
+import numpy as np
 
 def and_bit(a, b):
-    return a * b
+    #return a * b
+    return torch.min(a, b)
 
 def xor_bit(a, b):
-    return 1.0 - (1.0 - a + a * a * b) * (1.0 - b + a * b * b)
+    #return 1.0 - (1.0 - a + a * a * b) * (1.0 - b + a * b * b)
+    m = torch.min(a, b)
+    return 1.0 - torch.min((1.0 - a + m), (1.0 - b + m))
 
 def or_bit(a, b):
-    return 1.0 - (1.0 - a * a) * (1.0 - b * b)
+    #return 1.0 - (1.0 - a * a) * (1.0 - b * b)
+    return torch.max(a, b)
 
 def not_bit(a):
     return 1.0 - a
@@ -45,7 +50,7 @@ def right_rotate(a, c):
     return a[-c:] + a[0:-c]
 
 def right_shift(a, c):
-    return ([0.0] * c) + a[0:-c]
+    return ([torch.tensor(0.0)] * c) + a[0:-c]
 
 def bits_to_num(a):
     total = a[-1]
@@ -53,6 +58,12 @@ def bits_to_num(a):
     for bit in list(reversed(a))[1:]:
         total = total + bit * multiplier
         multiplier *= 2.0
+    return total
+
+def bits_to_num_unweighted(a):
+    total = a[-1]
+    for bit in list(reversed(a))[1:]:
+        total = total + bit
     return total
 
 def left_shift(a, c):
@@ -136,7 +147,7 @@ def sha256(message):
     message = message + [parallel_zeros] * K
 
     # append L as a 64-bit big-endian integer, making the total post-processed length a multiple of 512 bits
-    message = message + num_to_64_bits(L)
+    message = message + [torch.tensor(n, dtype=torch.float) for n in num_to_64_bits(L)]
 
     for chunk in chunks(message, 512):
         w = list(chunks(chunk, 32)) + [None] * (64 - 16)
@@ -194,12 +205,37 @@ def sha256(message):
 
     return h0 + h1 + h2 + h3 + h4 + h5 + h6 + h7
 
-hello_world = "Hello world"
+hello_world = "gotcha"
 hello_world_hash = 0x64ec88ca00b268e5ba1a35678a1b5316d212f4f366b2477232534a8aeca37f3c
 hello_world_ascii = [ord(c) for c in hello_world]
 hello_world_binary = flatten([num_to_8_bits(c) for c in hello_world_ascii])
 assert(len(hello_world_binary) % 8 == 0)
 hello_world_torch = expand_constant(hello_world_binary)
+
+samples = 10
+x = np.linspace(0, 1, samples)
+y = np.linspace(0, 1, samples)
+
+z_output = np.zeros((samples, samples))
+
+for j in range(samples):
+    for i in range(samples):
+        hello_world_torch[0][0] = x[i]
+        hello_world_torch[1][0] = y[j]
+        hello_world_digest = sha256(sha256(hello_world_torch))
+
+        leading_zeros = 32
+        hw_leading_digest = hello_world_digest[0:leading_zeros]
+        #hw_leading_float = float(bits_to_num(hw_leading_digest)[0])
+        hw_leading_float = float(bits_to_num_unweighted(hw_leading_digest)[0])
+        #hw_leading_float = float(hello_world_digest[0])
+
+        z_output[i, j] = float(hello_world_digest[0])
+
+        print("{" + str(x[i]) + "," + str(y[j]) + "," + str(hw_leading_float) + "},")
+
+input("Continue?")
+
 hello_world_digest = sha256(hello_world_torch)
 
 bits = [round(float(bit[0])) for bit in hello_world_digest]
@@ -231,16 +267,17 @@ def normalize(input, dim):
     return input / norm_expanded
 
 while True:
-    nonce = [torch.sigmoid(bit) for bit in raw_nonce]
-    message0 = nonce + prev_hash
+    with torch.autograd.detect_anomaly():
+        nonce = [torch.sigmoid(bit) for bit in raw_nonce]
+        message0 = nonce + prev_hash
 
-    optimizer.zero_grad()
-    #digest = sha256(sha256(message0))
-    digest = sha256(message0)
-    leading_digest = digest[0:leading_zeros]
-    leading_float = bits_to_num(leading_digest)
-    total = torch.sum(leading_float)
-    total.backward()
+        optimizer.zero_grad()
+        #digest = sha256(sha256(message0))
+        digest = sha256(message0)
+        leading_digest = digest[0:leading_zeros]
+        leading_float = bits_to_num(leading_digest)
+        total = torch.sum(leading_float)
+        total.backward()
 
     print([r.grad for r in raw_nonce])
     print(total)
